@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2a78d6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="多益單字">
+  <meta name="description" content="多益 600 分單字與文法練習：每日任務、間隔重複複習、Part 5 文法題。">
+  <title>多益單字文法練習</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📘%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="pageTitle">今日任務</h1>
+  </header>
+
+  <main id="view" class="view" aria-live="polite">
+    <p class="loading">載入中…</p>
+  </main>
+
+  <nav class="tabbar" aria-label="主選單">
+    <button data-tab="home" class="active"><span class="ti">✅</span><span>今日</span></button>
+    <button data-tab="words"><span class="ti">📚</span><span>單字</span></button>
+    <button data-tab="grammar"><span class="ti">✏️</span><span>文法</span></button>
+    <button data-tab="stats"><span class="ti">📈</span><span>統計</span></button>
+    <button data-tab="settings"><span class="ti">⚙️</span><span>設定</span></button>
+  </nav>
+
+  <!-- 練習畫面（全螢幕） -->
+  <div id="overlay" class="overlay" hidden>
+    <div class="s-top">
+      <button class="icon-btn" data-act="exit" aria-label="離開練習">✕</button>
+      <div class="s-progress"><div id="sBar"></div></div>
+      <span id="sCount" class="s-count"></span>
+    </div>
+    <div id="sBody" class="s-body"></div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <noscript><p class="loading">這個 App 需要開啟 JavaScript 才能使用。</p></noscript>
+
+  <!-- 資料檔用的登記函式 -->
+  <script>
+    window.WORD_LEVELS = [];
+    function addWordLevel(data) { window.WORD_LEVELS.push(data); }
+    window.GRAMMAR_QUESTIONS = [];
+    function addGrammarQuestions(list) { window.GRAMMAR_QUESTIONS = window.GRAMMAR_QUESTIONS.concat(list); }
+  </script>
+  <script src="grammar.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // 自動讀取 words-level1.js、words-level2.js、words-level3.js …
+    // 依序嘗試載入，直到找不到下一個檔案為止，所以新增 words-level4.js 就會自動讀到。
+    (function loadLevel(n) {
+      var s = document.createElement("script");
+      s.src = "words-level" + n + ".js";
+      s.onload = function () { n < 99 ? loadLevel(n + 1) : startApp(); };
+      s.onerror = function () { s.remove(); startApp(); };
+      document.body.appendChild(s);
+    })(1);
+  </script>
+</body>
+</html>

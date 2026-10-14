@@ -70,7 +70,7 @@ const gTopics = {};
 g.forEach((q, i) => {
   const where = `文法第 ${i + 1} 題`;
   gTopics[q.topic] = (gTopics[q.topic] || 0) + 1;
-  if (!["詞性", "時態", "介系詞", "連接詞"].includes(q.topic)) errors.push(`${where}：主題錯誤「${q.topic}」`);
+  if (!["詞性", "時態", "介系詞", "連接詞", "代名詞", "被動語態", "不定詞與動名詞", "比較級", "關係代名詞"].includes(q.topic)) errors.push(`${where}：主題錯誤「${q.topic}」`);
   if (!q.q || !q.q.includes("____")) errors.push(`${where}：題目要有 ____ 空格`);
   if (!Array.isArray(q.options) || q.options.length !== 4) errors.push(`${where}：要有 4 個選項`);
   else if (new Set(q.options).size !== 4) errors.push(`${where}：選項重複`);

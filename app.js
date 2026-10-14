@@ -24,7 +24,7 @@ const REVIEW_LIMIT = 80; // 待複習超過這個數量時，新單字減半
 const MASTER_REPS = 3; // 連續答對 3 次（間隔拉長）就算「已學會」
 const BATCH = 5; // 新單字每 5 個一組：先看卡片，再小測驗
 const GRAMMAR_ROUND = 10;
-const GRAMMAR_TOPICS = ["詞性", "時態", "介系詞", "連接詞"];
+const GRAMMAR_TOPICS = ["詞性", "時態", "介系詞", "連接詞", "代名詞", "被動語態", "不定詞與動名詞", "比較級", "關係代名詞"];
 const RATES = [{ v: 0.7, n: "慢" }, { v: 0.9, n: "正常" }, { v: 1.05, n: "快" }];
 
 const DONE_MSGS = [
@@ -1035,7 +1035,7 @@ function finishSession() {
 
 /* ========== 程度測驗 ========== */
 const PLACE_PER_LEVEL = 10; // 每個等級抽 10 個字
-const PLACE_GRAMMAR_PER_TOPIC = 2; // 文法每個主題 2 題
+const PLACE_GRAMMAR_PER_TOPIC = 1; // 文法每個主題 1 題
 const PLACE_PASS = 80; // 掌握率達 80% 就算「這個等級已經會了」
 
 function placementCount() {

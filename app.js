@@ -194,6 +194,8 @@ function defaultState() {
     daily: null, // 今日任務
     history: {}, // 每天的練習量
     grammar: {}, // 文法題作答紀錄
+    placement: null, // 程度測驗結果
+    priority: [], // 優先學習的單字（程度測驗答錯的字）
     lastExport: null,
   };
 }
@@ -216,6 +218,8 @@ function migrate(o) {
   });
   s.history = o.history && typeof o.history === "object" ? o.history : {};
   s.grammar = o.grammar && typeof o.grammar === "object" ? o.grammar : {};
+  s.priority = Array.isArray(o.priority) ? o.priority.filter((x) => typeof x === "string") : [];
+  if (s.placement && typeof s.placement !== "object") s.placement = null;
   if (s.daily && (typeof s.daily.date !== "string" || !Array.isArray(s.daily.newIds))) s.daily = null;
   return s;
 }
@@ -284,11 +288,13 @@ function dueIds() {
   const t = today();
   return Object.keys(S.words).filter((id) => DB.map[id] && S.words[id].due <= t);
 }
+// 新單字的出現順序：① 程度測驗答錯的字 ② 從設定的等級開始往上 ③ 最後才補前面等級
 function newPool() {
-  const lv = S.settings.newLevel;
-  let pool = DB.order.filter((id) => !S.words[id] && (lv === "all" || DB.map[id].level === +lv));
-  if (!pool.length && lv !== "all") pool = DB.order.filter((id) => !S.words[id]);
-  return pool;
+  const start = S.settings.newLevel === "all" ? -Infinity : +S.settings.newLevel;
+  const pri = (S.priority || []).filter((id) => DB.map[id] && !S.words[id]);
+  const priSet = new Set(pri);
+  const rest = DB.order.filter((id) => !S.words[id] && !priSet.has(id));
+  return pri.concat(rest.filter((id) => DB.map[id].level >= start), rest.filter((id) => DB.map[id].level < start));
 }
 function quotaFor(dueCount) {
   const n = S.settings.newPerDay;
@@ -477,6 +483,7 @@ function homeHTML() {
   const dt = new Date();
   const wk = "日一二三四五六"[dt.getDay()];
   let out = `<p class="today-date">${dt.getMonth() + 1} 月 ${dt.getDate()} 日（星期${wk}）</p>`;
+  if (!S.placement && !Object.keys(S.words).length) out += placementPromptHTML();
 
   if (d.halved) {
     out += `<div class="notice">📌 今天待複習的單字有 <b>${d.dueAtStart}</b> 個（超過 ${REVIEW_LIMIT} 個），新單字自動減半為 <b>${d.quota}</b> 個。先把複習清掉，記得更牢！</div>`;
@@ -733,10 +740,12 @@ function settingsHTML() {
       <p class="hint">預設 20 個。當天待複習超過 ${REVIEW_LIMIT} 個時，新單字會自動減半。</p>
       <div class="field"><label for="newLevel">新單字範圍</label>
         <select id="newLevel" class="select" data-set="newLevel">
-          <option value="all" ${st.newLevel === "all" ? "selected" : ""}>依序學習（Level 1 → 2 → 3…）</option>
-          ${DB.levels.map((l) => `<option value="${l.level}" ${String(st.newLevel) === String(l.level) ? "selected" : ""}>只學 Level ${l.level} ${esc(l.name)}</option>`).join("")}
-        </select></div>
+          <option value="all" ${st.newLevel === "all" ? "selected" : ""}>從 Level 1 開始依序學習</option>
+          ${DB.levels.slice(1).map((l) => `<option value="${l.level}" ${String(st.newLevel) === String(l.level) ? "selected" : ""}>從 Level ${l.level} ${esc(l.name)} 開始</option>`).join("")}
+        </select>
+        <p class="hint">學完後面的等級，會再回頭補前面等級還沒學的字。</p></div>
     </div>
+    ${placementSettingsHTML()}
     <div class="card"><h2>複習題型</h2>
       <div class="check-list">${TYPE_KEYS.map((k) => `<label class="check"><input type="checkbox" data-set="type" data-k="${k}" ${st.types[k] ? "checked" : ""} ${k === "listen" && !TTS.ok ? "disabled" : ""}> ${TYPE_NAMES[k]}</label>`).join("")}</div>
       <p class="hint">新單字第一次測驗固定用簡單題型；拼字題會等你答對過一次後才出現。</p>
@@ -815,6 +824,7 @@ function nextItem() {
   if (item.k === "learn") renderLearn(item);
   else if (item.k === "q") renderQuiz(item);
   else if (item.k === "g") renderGrammarQ(item);
+  else if (item.k === "pw" || item.k === "pg") renderPlacementQ(item);
 }
 function advance() {
   session.pos++;
@@ -994,6 +1004,7 @@ function answerGrammar(i) {
 /* ----- 結算 ----- */
 function finishSession() {
   const s = session;
+  if (s.mode === "placement") return finishPlacement();
   s.done = true;
   s.cur = null;
   updateTop();
@@ -1020,6 +1031,235 @@ function finishSession() {
     ? `<button class="btn" data-act="practice" data-level="${s.level}" data-topic="${esc(s.topic)}">再練一次</button>`
     : "";
   setBody(html + `<div class="btn-row" style="margin-top:20px">${again}<button class="btn primary" data-act="close">完成</button></div>`);
+}
+
+/* ========== 程度測驗 ========== */
+const PLACE_PER_LEVEL = 10; // 每個等級抽 10 個字
+const PLACE_GRAMMAR_PER_TOPIC = 2; // 文法每個主題 2 題
+const PLACE_PASS = 80; // 掌握率達 80% 就算「這個等級已經會了」
+
+function placementCount() {
+  const words = DB.levels.reduce((a, l) => a + Math.min(PLACE_PER_LEVEL, l.ids.length), 0);
+  const gram = GRAMMAR_TOPICS.reduce((a, t) => a + Math.min(PLACE_GRAMMAR_PER_TOPIC, GQ.filter((q) => q.topic === t).length), 0);
+  return { words, gram, total: words + gram };
+}
+function placementPromptHTML() {
+  return `<div class="card place-card">
+    <h2>🧭 第一次使用？先做個程度測驗</h2>
+    <p class="hint" style="margin-top:0">約 ${placementCount().total} 題、5 分鐘。測完會告訴你大概認識多少單字、該從哪個等級開始，答錯的字會優先排進每日新單字。</p>
+    <div class="btn-row">
+      <button class="btn primary" data-act="placement-intro">開始測驗</button>
+      <button class="btn" data-act="placement-skip">先跳過</button>
+    </div></div>`;
+}
+function placementSettingsHTML() {
+  const p = S.placement;
+  const done = p && p.levels;
+  return `<div class="card"><h2>程度測驗</h2>
+    <p class="hint" style="margin-top:0">${done
+      ? `上次測驗：${p.date}・預估認識約 ${p.est} 個單字・建議從 Level ${p.start} 開始${p.applied ? "（已套用）" : "（尚未套用）"}`
+      : "還沒做過程度測驗。測驗可以幫你找到適合的起點，並把不會的字排進優先學習。"}</p>
+    <div class="btn-row">
+      ${done ? `<button class="btn" data-act="placement-result">📋 查看上次結果</button>` : ""}
+      <button class="btn" data-act="placement-intro">🧭 ${done ? "重新測驗" : "開始測驗"}</button>
+    </div></div>`;
+}
+// 在練習畫面中顯示一個靜態頁面（說明頁、結果頁）
+function openPanel(html) {
+  session = { mode: "panel", queue: [], pos: 0, done: true };
+  $("#toast").hidden = true;
+  $("#overlay").hidden = false;
+  document.body.classList.add("no-scroll");
+  $("#sBar").style.width = "0%";
+  $("#sCount").textContent = "";
+  setBody(html);
+}
+function placementIntroHTML() {
+  const c = placementCount();
+  return `<div class="place-head"><div style="font-size:3rem">🧭</div><h2>程度測驗</h2></div>
+    <div class="card"><ul class="intro-list">
+      <li><b>單字 ${c.words} 題</b>：由簡單到難（Level 1 → ${DB.levels[DB.levels.length - 1].level}），看英文選中文意思。</li>
+      <li><b>文法 ${c.gram} 題</b>：多益 Part 5 單句填空。</li>
+      <li>不會的題目請按 <b>「🤔 不知道」</b>，<b>不要用猜的</b>，分析結果才會準。</li>
+      <li>測驗中不會顯示對錯，最後一起看分析。</li>
+    </ul></div>
+    <button class="btn primary block" data-act="placement-start">開始測驗</button>`;
+}
+function buildPlacement() {
+  const items = [];
+  DB.levels.forEach((lv) => {
+    const picked = [];
+    const fresh = (list) => {
+      const notLearned = list.filter((id) => !S.words[id] && !picked.includes(id));
+      return notLearned.length ? notLearned : list.filter((id) => !picked.includes(id));
+    };
+    // 每個主題至少抽 1 個，剩下的名額隨機補滿
+    shuffle(Object.keys(lv.topics).filter((t) => lv.topics[t].length)).forEach((t) => {
+      if (picked.length < PLACE_PER_LEVEL) picked.push(pick(fresh(lv.topics[t])));
+    });
+    while (picked.length < Math.min(PLACE_PER_LEVEL, lv.ids.length)) picked.push(pick(fresh(lv.ids)));
+    shuffle(picked).forEach((id) => items.push({ k: "pw", id, level: lv.level }));
+  });
+  GRAMMAR_TOPICS.forEach((t) => {
+    shuffle(GQ.filter((q) => q.topic === t)).slice(0, PLACE_GRAMMAR_PER_TOPIC).forEach((q) => items.push({ k: "pg", q }));
+  });
+  return items;
+}
+function renderPlacementQ(item) {
+  session.cur = { item, answered: false };
+  const idk = `<button class="btn block idk" data-act="p-opt" data-i="-1">🤔 不知道</button>`;
+  if (item.k === "pw") {
+    const w = DB.map[item.id];
+    const q = buildQuestion(w, "enzh");
+    session.cur.q = q;
+    setBody(`<div class="q-type"><span class="tag">🧭 程度測驗・單字</span></div>
+      <div class="q-prompt"><div class="q-word en">${esc(w.w)}</div>
+        <div class="q-sub"><span class="kk">[${esc(w.kk)}]</span> <button class="speak sm" data-say="${esc(w.w)}" aria-label="朗讀">🔊</button></div>
+        <div class="q-sub">選出正確的中文意思</div></div>
+      <div class="options">${q.options
+        .map((o, i) => `<button class="opt" data-act="p-opt" data-i="${i}"><span class="k">${LETTERS[i]}</span><span>${esc(o.zh)}</span></button>`)
+        .join("")}</div>${idk}`);
+    if (S.settings.autoSpeak) TTS.speak(w.w);
+  } else {
+    const q = item.q;
+    setBody(`<div class="q-type"><span class="tag">🧭 程度測驗・文法（${esc(q.topic)}）</span></div>
+      <div class="g-sentence en">${q.q.split("____").map(esc).join(`<span class="blank">&nbsp;</span>`)}</div>
+      <div class="options">${q.options
+        .map((o, i) => `<button class="opt" data-act="p-opt" data-i="${i}"><span class="k">(${LETTERS[i]})</span><span class="en">${esc(o)}</span></button>`)
+        .join("")}</div>${idk}`);
+  }
+}
+function answerPlacement(i) {
+  const cur = session.cur;
+  if (!cur || cur.answered) return;
+  cur.answered = true;
+  const item = cur.item;
+  const ans = item.k === "pw" ? cur.q.answer : item.q.answer;
+  item.result = i === -1 ? "idk" : i === ans ? "ok" : "ng";
+  logAnswer(item.k === "pw" ? "w" : "g", item.result === "ok");
+  advance();
+}
+// 掌握率：扣掉「猜對」的機率（4 選 1，每答錯 3 題約有 1 題是猜對的）
+function placementScore(list) {
+  const n = list.length;
+  const c = list.filter((x) => x.result === "ok").length;
+  const w = list.filter((x) => x.result === "ng").length;
+  return { n, c, w, d: n - c - w, acc: n ? Math.round(Math.max(0, (c - w / 3) / n) * 100) : 0 };
+}
+function finishPlacement() {
+  const items = session.queue;
+  const words = items.filter((x) => x.k === "pw");
+  const levels = {};
+  DB.levels.forEach((l) => (levels[l.level] = placementScore(words.filter((x) => x.level === l.level))));
+  const startLv = DB.levels.find((l) => levels[l.level].n && levels[l.level].acc < PLACE_PASS) || DB.levels[DB.levels.length - 1];
+  const est = Math.round(DB.levels.reduce((a, l) => a + (l.ids.length * levels[l.level].acc) / 100, 0));
+  const topics = {};
+  words.forEach((x) => {
+    const r = topics[DB.map[x.id].topic] || (topics[DB.map[x.id].topic] = { n: 0, c: 0 });
+    r.n++;
+    if (x.result === "ok") r.c++;
+  });
+  const grammar = {};
+  items.filter((x) => x.k === "pg").forEach((x) => {
+    const r = grammar[x.q.topic] || (grammar[x.q.topic] = { n: 0, c: 0 });
+    r.n++;
+    if (x.result === "ok") r.c++;
+  });
+  S.placement = {
+    date: today(), levels, topics, grammar, start: startLv.level, est, applied: false,
+    known: words.filter((x) => x.result === "ok").map((x) => x.id),
+    // 起點等級（含）以下答錯或不知道的字 → 優先學習
+    weak: words.filter((x) => x.result !== "ok" && x.level <= startLv.level).map((x) => x.id),
+  };
+  save();
+  session.done = true;
+  updateTop();
+  $("#sBar").style.width = "100%";
+  setBody(placementResultHTML(S.placement));
+}
+function placementAdvice(p) {
+  const first = DB.levels[0];
+  const startLv = DB.levels.find((l) => l.level === p.start) || first;
+  const allPass = DB.levels.every((l) => !p.levels[l.level] || p.levels[l.level].acc >= PLACE_PASS);
+  if (allPass) return { title: "🏆 單字量已接近 600 分水準！", text: `每個等級都掌握得很好！建議從 Level ${p.start} 開始鞏固，並多做文法練習。` };
+  if (p.start === first.level) {
+    return (p.levels[first.level] || {}).acc < 50
+      ? { title: "🌱 從基礎單字開始", text: "Level 1 的基礎單字還不太熟，從最基本的開始最有效率。別擔心，每天 20 個，大約 3 週就能學完 Level 1！" }
+      : { title: "📗 先把 Level 1 補齊", text: "基礎單字已經認識一部分了。先把 Level 1 還不熟的字補起來，再往上挑戰。" };
+  }
+  return { title: `🚀 可以從 Level ${p.start}「${esc(startLv.name)}」開始`, text: "前面的等級掌握得不錯！直接從這裡學新單字，前面等級答錯的字會優先補強。" };
+}
+function placementResultHTML(p) {
+  const adv = placementAdvice(p);
+  let out = `<div class="place-head"><h2>${adv.title}</h2><p>${adv.text}</p></div>
+    <div class="stat-grid">
+      <div class="stat-tile"><div class="v">≈ ${p.est}</div><div class="l">📖 預估已認識的單字（共 ${DB.words.length}）</div></div>
+      <div class="stat-tile"><div class="v">Level ${p.start}</div><div class="l">🎯 建議的起點</div></div>
+    </div>`;
+
+  out += `<div class="card"><h2>各等級掌握率</h2>`;
+  DB.levels.forEach((l) => {
+    const r = p.levels[l.level];
+    if (!r || !r.n) return;
+    out += `<div class="prow"><div class="pl"><b>Level ${l.level} ${esc(l.name)}</b><span>${r.acc}%</span></div>
+      <div class="pbar">${r.acc ? `<span style="width:${r.acc}%"></span>` : ""}</div>
+      <div class="hint">答對 ${r.c}・答錯 ${r.w}・不知道 ${r.d}（共 ${r.n} 題）</div></div>`;
+  });
+  out += `<p class="hint">掌握率有扣除「用猜的猜對」的機率；達 ${PLACE_PASS}% 代表這個等級大致會了。</p></div>`;
+
+  const tps = Object.keys(p.topics || {}).map((t) => ({ t, ...p.topics[t] }));
+  const weakT = tps.filter((x) => x.c / x.n < 0.5).sort((a, b) => a.c / a.n - b.c / b.n);
+  const goodT = tps.filter((x) => x.c === x.n);
+  const tpName = (x) => `${topicIcon(x.t)} ${esc(topicName(x.t))}（${x.c}/${x.n}）`;
+  out += `<div class="card"><h2>主題分析</h2>
+    ${weakT.length ? `<p>⚠️ <b>需要加強：</b>${weakT.map(tpName).join("、")}</p>` : ""}
+    ${goodT.length ? `<p>👍 <b>表現不錯：</b>${goodT.map(tpName).join("、")}</p>` : ""}
+    ${!weakT.length && !goodT.length ? `<p>各主題表現差不多，照順序學就可以了。</p>` : ""}
+    <p class="hint">每個主題只抽了幾題，僅供參考。</p></div>`;
+
+  const gts = GRAMMAR_TOPICS.filter((t) => p.grammar && p.grammar[t]);
+  if (gts.length) {
+    const weakG = gts.filter((t) => p.grammar[t].c < p.grammar[t].n);
+    out += `<div class="card"><h2>文法分析</h2>
+      <p>${gts.map((t) => `${t} <b>${p.grammar[t].c}/${p.grammar[t].n}</b>`).join("・")}</p>
+      <p>${weakG.length ? `建議到「文法」頁加強：<b>${weakG.join("、")}</b>` : "文法基礎不錯！可以用綜合練習維持手感。"}</p></div>`;
+  }
+
+  const weakWords = (p.weak || []).filter((id) => DB.map[id]);
+  out += `<div class="card"><h2>優先學習的單字（${weakWords.length} 個）</h2>
+    ${weakWords.length
+      ? `<div class="word-chips">${weakWords.map((id) => `<span class="word-chip"><b class="en">${esc(DB.map[id].w)}</b>${esc(DB.map[id].zh)}</span>`).join("")}</div>
+         <p class="hint">這些是 Level ${p.start} 以內答錯或不知道的字，套用後會最先出現在每日新單字。</p>`
+      : `<p class="hint">起點以內的題目全部答對了！</p>`}
+    ${p.known && p.known.length ? `<p class="hint">答對的 ${p.known.length} 個字會直接排進複習（幾天後再確認一次），不用再當新單字學。</p>` : ""}
+  </div>`;
+
+  out += p.applied
+    ? `<p class="hint" style="text-align:center">✅ 這份結果已經套用。</p><button class="btn primary block" data-act="close">完成</button>`
+    : `<div class="btn-row"><button class="btn" data-act="close">先不要套用</button>
+        <button class="btn primary" data-act="placement-apply">✅ 套用並開始學習</button></div>`;
+  return out;
+}
+function applyPlacement() {
+  const p = S.placement;
+  if (!p || !p.levels) return;
+  const t = today();
+  const known = (p.known || []).filter((id) => DB.map[id] && !S.words[id]);
+  // 答對的字視為「大致認識」：排進幾天後的複習，再答對一次就算學會
+  known.forEach((id, i) => {
+    S.words[id] = { ef: 2.5, int: 4, reps: 2, due: addDays(t, 3 + (i % 5)), lapses: 0, ok: 1, ng: 0, first: t, placed: true };
+  });
+  S.priority = (p.weak || []).filter((id) => DB.map[id]);
+  S.settings.newLevel = p.start === DB.levels[0].level ? "all" : p.start;
+  if (S.daily && S.daily.date === t) {
+    const ks = new Set(known);
+    S.daily.newIds = S.daily.newIds.filter((id) => !ks.has(id));
+    refreshDailyNew();
+  }
+  p.applied = true;
+  save();
+  closeSession();
+  toast("✅ 已套用！今天的新單字已依照測驗結果重新安排");
 }
 
 /* ----- 開始各種練習 ----- */
@@ -1126,9 +1366,21 @@ function onClick(e) {
     case "start-daily": return startDaily();
     case "extra": return addExtra();
     case "go-grammar": return setTab("grammar");
-    case "exit":
-      if (!session || session.done || confirm("要離開練習嗎？\n已作答的進度都會保存。")) closeSession();
+    case "exit": {
+      const msg = session && session.mode === "placement" ? "要離開測驗嗎？\n這次的測驗結果不會保存。" : "要離開練習嗎？\n已作答的進度都會保存。";
+      if (!session || session.done || confirm(msg)) closeSession();
       return;
+    }
+    case "placement-intro": return openPanel(placementIntroHTML());
+    case "placement-start": return openSession({ mode: "placement", queue: buildPlacement() });
+    case "placement-result": return S.placement && S.placement.levels && openPanel(placementResultHTML(S.placement));
+    case "placement-apply": return applyPlacement();
+    case "placement-skip":
+      S.placement = { skipped: true, date: today() };
+      save();
+      toast("之後可以到「設定」做程度測驗");
+      return render();
+    case "p-opt": return answerPlacement(+d.i);
     case "close": return closeSession();
     case "learn-next": {
       const item = session.queue[session.pos];
@@ -1271,7 +1523,8 @@ function onKey(e) {
   const map = { 1: 0, 2: 1, 3: 2, 4: 3, a: 0, b: 1, c: 2, d: 3 };
   const i = map[e.key.toLowerCase()];
   if (i === undefined) return;
-  if (cur.item.k === "g") answerGrammar(i);
+  if (cur.item.k === "pw" || cur.item.k === "pg") answerPlacement(i);
+  else if (cur.item.k === "g") answerGrammar(i);
   else if (cur.q && cur.q.options) answerOption(i);
 }
 

@@ -371,3 +371,16 @@ table.data th:first-child, table.data td:first-child { text-align: left; }
   .big-check { animation: none; }
   #sBar { transition: none; }
 }
+
+/* ===== 程度測驗 ===== */
+.place-card { border: 2px solid var(--primary); }
+.place-head { text-align: center; padding: 14px 4px 6px; }
+.place-head h2 { font-size: 1.3rem; margin: 0 0 8px; }
+.place-head p { margin: 0 0 12px; color: var(--text-2); }
+.intro-list { margin: 0; padding-left: 20px; }
+.intro-list li { margin-bottom: 8px; }
+.idk { margin-top: 12px; border-style: dashed; color: var(--text-2); }
+.word-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.word-chip { background: var(--surface-2); border-radius: 8px; padding: 4px 9px; font-size: .88rem; }
+.word-chip b { margin-right: 5px; }
+.s-body .stat-tile .v { font-size: 1.6rem; }

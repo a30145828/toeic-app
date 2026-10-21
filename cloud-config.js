@@ -10,8 +10,8 @@
  *     資料的安全是靠 Firestore 的「安全規則」保護，請務必照 README 設定規則。
  */
 window.CLOUD_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  appId: ""
+  apiKey: "AIzaSyAdB-R6pHNjzdFoWKFKhwPokd7EHDpP5ac",
+  authDomain: "toeic-app-1b22c.firebaseapp.com",
+  projectId: "toeic-app-1b22c",
+  appId: "1:908979809639:web:bbf2177bc249e5129353c2"
 };

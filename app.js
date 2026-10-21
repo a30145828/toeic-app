@@ -1,6 +1,6 @@
 /*
  * 多益單字與文法練習 App 主程式
- * 純前端，學習紀錄存在瀏覽器的 localStorage。
+ * 純前端，學習紀錄存在瀏覽器的 IndexedDB（儲存與雲端同步的程式在 storage.js）。
  */
 "use strict";
 
@@ -176,7 +176,7 @@ function hashId(s) {
   return "g" + (h >>> 0).toString(36);
 }
 
-/* ========== 學習紀錄（localStorage） ========== */
+/* ========== 學習紀錄（儲存方式見 storage.js） ========== */
 let S = null;
 function defaultState() {
   return {
@@ -197,6 +197,7 @@ function defaultState() {
     placement: null, // 程度測驗結果
     priority: [], // 優先學習的單字（程度測驗答錯的字）
     lastExport: null,
+    updatedAt: 0, // 最後修改時間（多台裝置同步時用來判斷哪份比較新）
   };
 }
 function migrate(o) {
@@ -222,21 +223,6 @@ function migrate(o) {
   if (s.placement && typeof s.placement !== "object") s.placement = null;
   if (s.daily && (typeof s.daily.date !== "string" || !Array.isArray(s.daily.newIds))) s.daily = null;
   return s;
-}
-function load() {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    S = raw ? migrate(JSON.parse(raw)) : defaultState();
-  } catch (e) {
-    S = defaultState();
-  }
-}
-function save() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(S));
-  } catch (e) {
-    toast("⚠️ 無法儲存紀錄（瀏覽器可能關閉了儲存功能）");
-  }
 }
 function logAnswer(kind, correct) {
   const t = today();
@@ -470,6 +456,7 @@ function render() {
     return;
   }
   view.innerHTML = { home: homeHTML, words: wordsHTML, grammar: grammarHTML, stats: statsHTML, settings: settingsHTML }[tab]();
+  if (tab === "settings") fillStorageInfo();
 }
 
 /* ----- 今日任務頁 ----- */
@@ -760,8 +747,10 @@ function settingsHTML() {
     <div class="card"><h2>外觀</h2>
       <div class="seg">${[["auto", "跟隨系統"], ["light", "淺色"], ["dark", "深色"]].map(([v, n]) => `<button class="${st.theme === v ? "on" : ""}" data-act="set-theme" data-v="${v}">${n}</button>`).join("")}</div>
     </div>
+    ${storageCardHTML()}
+    ${cloudCardHTML()}
     <div class="card"><h2>學習紀錄備份</h2>
-      <p class="hint" style="margin-top:0">學習紀錄只存在這台裝置的這個瀏覽器裡。換手機、清除瀏覽器資料前，請先匯出備份。</p>
+      <p class="hint" style="margin-top:0">${Cloud.user ? "已登入雲端同步，紀錄會自動備份。也可以另外匯出一份檔案保存。" : "沒有登入雲端時，學習紀錄只存在這台裝置的這個瀏覽器裡。換手機、清除瀏覽器資料前，請先匯出備份。"}</p>
       <div class="btn-row">
         <button class="btn" data-act="export">⬇️ 匯出備份（JSON）</button>
         <button class="btn" data-act="import">⬆️ 匯入備份</button>
@@ -1342,9 +1331,12 @@ function importData(file) {
     }
     if (!st) return alert("這不是有效的備份檔。請選擇從本 App「匯出備份」產生的 JSON 檔。");
     const n = Object.keys(st.words).length;
-    if (!confirm(`要匯入這份備份嗎？\n\n備份裡有 ${n} 個單字的學習紀錄。\n⚠️ 目前這台裝置上的紀錄會被覆蓋。`)) return;
+    const cloudNote = Cloud.user ? "\n☁️ 雲端上的紀錄也會被這份備份取代。" : "";
+    if (!confirm(`要匯入這份備份嗎？\n\n備份裡有 ${n} 個單字的學習紀錄。\n⚠️ 目前這台裝置上的紀錄會被覆蓋。${cloudNote}`)) return;
     S = migrate(st);
-    save();
+    S.updatedAt = Date.now();
+    saveLocal();
+    if (Cloud.user) Cloud.sync("overwrite");
     applyTheme();
     toast("✅ 匯入成功！");
     render();
@@ -1455,12 +1447,20 @@ function onClick(e) {
       applyTheme();
       return render();
     case "export": return exportData();
+    case "persist": return requestPersist();
+    case "cloud-login": return Cloud.login();
+    case "cloud-logout": return Cloud.logout();
+    case "cloud-sync": return Cloud.sync();
+    case "cloud-wipe":
+      if (confirm("要刪除雲端上的學習紀錄嗎？\n這台裝置的紀錄會保留，但下次同步時會再上傳一份。\n如果不想再同步，請刪除後按「登出」。")) Cloud.wipe();
+      return;
     case "import": return $("#importFile").click();
     case "reset":
-      if (!confirm("確定要清除所有學習紀錄嗎？")) return;
+      if (!confirm(`確定要清除所有學習紀錄嗎？${Cloud.user ? "\n☁️ 雲端上的紀錄也會一起清除。" : ""}`)) return;
       if (!confirm("真的確定嗎？這個動作無法復原。\n（建議先匯出備份）")) return;
-      S = Object.assign(defaultState(), { settings: S.settings });
-      save();
+      S = Object.assign(defaultState(), { settings: S.settings, updatedAt: Date.now() });
+      saveLocal();
+      if (Cloud.user) Cloud.sync("overwrite");
       toast("已清除所有學習紀錄");
       return render();
   }
@@ -1530,12 +1530,12 @@ function onKey(e) {
 
 /* ========== 啟動 ========== */
 let started = false;
-function startApp() {
+async function startApp() {
   if (started) return;
   started = true;
   buildDB();
   if (DB.problems.length) console.warn("資料檢查發現問題：", DB.problems);
-  load();
+  await load();
   applyTheme();
   TTS.init();
   document.addEventListener("click", onClick);
@@ -1544,8 +1544,10 @@ function startApp() {
   document.addEventListener("keydown", onKey);
   // 跨日時（例如過了午夜再回到 App）重新整理今日任務
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") Cloud.flush(); // 離開 App 時把還沒上傳的紀錄送上雲端
     if (document.visibilityState === "visible" && !session && S.daily && S.daily.date !== today()) render();
   });
   render();
+  Cloud.init();
 }
 window.startApp = startApp;

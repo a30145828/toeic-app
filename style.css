@@ -384,3 +384,9 @@ table.data th:first-child, table.data td:first-child { text-align: left; }
 .word-chip { background: var(--surface-2); border-radius: 8px; padding: 4px 9px; font-size: .88rem; }
 .word-chip b { margin-right: 5px; }
 .s-body .stat-tile .v { font-size: 1.6rem; }
+
+/* ===== 儲存位置／雲端 ===== */
+.kv { list-style: none; margin: 0 0 8px; padding: 0; }
+.kv li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: .92rem; }
+.kv li span { color: var(--text-2); flex: none; }
+.kv li b { font-weight: 600; text-align: right; word-break: break-all; }

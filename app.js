@@ -471,6 +471,7 @@ function homeHTML() {
   const wk = "日一二三四五六"[dt.getDay()];
   let out = `<p class="today-date">${dt.getMonth() + 1} 月 ${dt.getDate()} 日（星期${wk}）</p>`;
   if (!S.placement && !Object.keys(S.words).length) out += placementPromptHTML();
+  if (installPrompt && !isStandalone()) out += `<div class="notice info">📲 可以把這個 App 安裝到手機主畫面，沒有網路也能練習。<button class="btn small" data-act="install" style="margin-left:8px">安裝</button></div>`;
 
   if (d.halved) {
     out += `<div class="notice">📌 今天待複習的單字有 <b>${d.dueAtStart}</b> 個（超過 ${REVIEW_LIMIT} 個），新單字自動減半為 <b>${d.quota}</b> 個。先把複習清掉，記得更牢！</div>`;
@@ -717,12 +718,49 @@ function showColTip(i) {
   tip.style.left = Math.min(Math.max(left, 70), chart.offsetWidth - 70) + "px";
 }
 
+/* ----- 安裝成 App（PWA） ----- */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault(); // 改由我們自己的「安裝 App」按鈕觸發
+  installPrompt = e;
+  if (S && !session && (tab === "home" || tab === "settings")) render();
+});
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  toast("✅ 已安裝！之後可以從手機主畫面直接打開");
+});
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function installCardHTML() {
+  let body;
+  if (isStandalone()) body = `<p class="hint" style="margin-top:0">✅ 目前正在以 App 模式使用。沒有網路時也能打開練習，有網路時會自動同步雲端並更新到最新版。</p>`;
+  else if (installPrompt) body = `<p class="hint" style="margin-top:0">安裝後手機主畫面會出現 App 圖示，打開是全螢幕，沒有網路也能練習。</p>
+      <button class="btn primary block" data-act="install">📲 安裝 App</button>`;
+  else if (isIOS()) body = `<p class="hint" style="margin-top:0">iPhone／iPad 請用 <b>Safari</b> 開啟這個網址，然後：</p>
+      <ol class="intro-list"><li>點下方的「分享」按鈕（方框加向上箭頭）</li><li>往下滑，點「<b>加入主畫面</b>」</li><li>點右上角「加入」</li></ol>`;
+  else if (location.protocol === "file:") body = `<p class="hint" style="margin-top:0">請用網址（GitHub Pages）開啟，才能安裝成 App。</p>`;
+  else body = `<p class="hint" style="margin-top:0">用 <b>Chrome</b> 開啟這個網址，點右上角「⋮」選單 →「<b>安裝應用程式</b>」或「<b>加到主畫面</b>」。</p>`;
+  return `<div class="card"><h2>📲 安裝成 App</h2>${body}</div>`;
+}
+async function installApp() {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  try {
+    await installPrompt.userChoice;
+  } catch (e) {
+    /* 使用者取消 */
+  }
+  installPrompt = null;
+  render();
+}
+
 /* ----- 設定頁 ----- */
 function settingsHTML() {
   const st = S.settings;
   const levelCounts = DB.levels.map((l) => `<li>Level ${l.level} ${esc(l.name)}：${l.ids.length} 個單字</li>`).join("");
   const voice = TTS.ok ? (TTS.voice ? `${esc(TTS.voice.name)}（${esc(TTS.voice.lang)}）` : "系統預設英文語音") : "這個瀏覽器不支援語音朗讀";
-  return `<div class="card"><h2>每日新單字數量</h2>
+  return `${installCardHTML()}
+    <div class="card"><h2>每日新單字數量</h2>
       <div class="seg">${NEW_OPTIONS.map((n) => `<button class="${st.newPerDay === n ? "on" : ""}" data-act="set-new" data-n="${n}">${n}</button>`).join("")}</div>
       <p class="hint">預設 20 個。當天待複習超過 ${REVIEW_LIMIT} 個時，新單字會自動減半。</p>
       <div class="field"><label for="newLevel">新單字範圍</label>
@@ -1448,6 +1486,7 @@ function onClick(e) {
       return render();
     case "export": return exportData();
     case "persist": return requestPersist();
+    case "install": return installApp();
     case "cloud-login": return Cloud.login();
     case "cloud-logout": return Cloud.logout();
     case "cloud-sync": return Cloud.sync();

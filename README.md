@@ -62,10 +62,15 @@ GitHub Pages 可以免費把這個 App 變成一個網址，手機打開網址�
 
 > ⚠️ 如果專案是「私人（Private）」的，免費帳號可能無法使用 GitHub Pages。可以到 Settings → General 最下面把專案改成 Public。
 
-### 把 App 加到手機主畫面（像 App 一樣使用）
+### 把 App 安裝到手機（PWA，免費）
 
-- **iPhone（Safari）**：打開網址 → 按下方的「分享」按鈕 → 選「**加入主畫面**」。
-- **Android（Chrome）**：打開網址 → 按右上角「⋮」→ 選「**加到主畫面**」或「**安裝應用程式**」。
+這個網頁可以直接「安裝」成手機 App：主畫面有自己的圖示、打開是全螢幕、**沒有網路也能練習**（有網路時會自動同步雲端並更新到最新版）。不用上架、不用付費。
+
+- **Android（Chrome）**：打開網址 → App 的「設定」頁按「📲 安裝 App」；或按右上角「⋮」→「**安裝應用程式**」。
+- **iPhone（Safari）**：打開網址 → 按下方的「分享」按鈕 →「**加入主畫面**」→「加入」。
+- **電腦（Chrome／Edge）**：網址列右邊會出現「安裝」圖示，點一下就能安裝成電腦 App。
+
+> 網站更新後，App 會在背景下載新版本，**下一次打開**時就會是新版。
 
 ### 重要：學習紀錄存在哪裡？
 
@@ -240,6 +245,7 @@ window.CLOUD_CONFIG = {
 | `storage.js` | 學習紀錄的儲存（IndexedDB）、空間資訊、雲端同步 |
 | `cloud-config.js` | 雲端同步的 Firebase 設定（沒用雲端就保持空白） |
 | `vendor/firebase/` | Firebase 官方程式庫（只有設定雲端時才會載入） |
+| `manifest.webmanifest`、`sw.js`、`icons/` | 安裝成 App 用的設定、離線快取、App 圖示 |
 | `style.css` | 畫面樣式（手機優先，支援深色模式） |
 | `words-level1.js` ~ `words-level3.js` | 單字資料 |
 | `grammar.js` | 文法題資料 |
